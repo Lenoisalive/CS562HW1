@@ -38,7 +38,7 @@ def write_csv(path, records):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument('dataset', type=Path, help='two finite numbers per nonblank line')
     parser.add_argument('--output', type=Path, default=Path('results/skyline.csv'))
     parser.add_argument('--seed', type=int, default=42)

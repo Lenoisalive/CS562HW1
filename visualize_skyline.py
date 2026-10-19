@@ -12,7 +12,7 @@ from skyline_io import read_records, reference_ids
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, add_help=False)
     parser.add_argument('dataset', nargs='?', type=Path, default=Path('Dataset_for_PA1'))
     parser.add_argument('--output', type=Path, default=Path('results/skyline.png'))
     parser.add_argument('--seed', type=int, default=42, help='R-tree clustering seed (default: 42)')

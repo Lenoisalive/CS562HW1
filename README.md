@@ -71,7 +71,6 @@ The executable form is equivalent:
 | `--output PATH` | `results/skyline.csv` | Destination CSV file; missing parent directories are created. |
 | `--seed INTEGER` | `42` | Random seed used by R-tree clustering for reproducible construction. |
 | `--verify` | Disabled | Compares BBS record IDs with an independent sorted scan before writing the output. |
-| `-h`, `--help` | — | Displays command usage. |
 
 Input has no header, with coordinates separated by whitespace:
 
@@ -106,7 +105,6 @@ python3 -m venv .venv
 | `dataset` | `Dataset_for_PA1` | Input dataset path; unlike the computation CLI, this positional argument is optional. |
 | `--output PATH` | `results/skyline.png` | Figure destination; use a `.pdf` extension to export PDF. |
 | `--seed INTEGER` | `42` | Random seed used for R-tree construction. |
-| `-h`, `--help` | — | Displays command usage. |
 
 The plot always checks BBS against the independent reference before saving, prints numbered skyline coordinates, and rejects empty input because there are no samples to display.
 
