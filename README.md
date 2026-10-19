@@ -19,7 +19,6 @@ skyline/
 │   ├── rect.py                      # Rectangle geometry
 │   ├── skyline_region.py            # Exclusive dominance region
 │   ├── tests/
-│   │   ├── test_dynamic.py
 │   │   ├── test_rtree.py
 │   │   ├── testutil.py
 │   │   └── __init__.py
@@ -45,7 +44,6 @@ skyline/
 | [dynamic_skyline.py](dynamic_skyline.py) | New | Maintains skyline records incrementally on insertion and repairs deletions through exclusive-region BBS. |
 | [demo_skyline_delete.py](demo_skyline_delete.py) | New | Computes the assignment skyline, deletes a fixed skyline record, exports a before/after plot, and restores the record with verification. |
 | [pyrtree/skyline_region.py](pyrtree/skyline_region.py) | New | Represents the deleted point's exclusive dominance region and provides membership and subtree intersection checks. |
-| [pyrtree/tests/test_dynamic.py](pyrtree/tests/test_dynamic.py) | New | Validates native deletion, region pruning, duplicate handling, random updates, and optional full-dataset updates. |
 
 
 ## 3. How to Start
@@ -132,7 +130,7 @@ Gray-blue markers show all input samples, while red markers identify skyline loc
 The R-tree is adapted from [pyrtree](https://code.google.com/archive/p/pyrtree/).
 
 
-## 5. Dynamic Skyline (Extra Credit)
+## 5. Extra Credit
 
 The `DynamicSkyline` API supports insertions, deletions, and skyline requests
 without rebuilding the R-tree after updates:
@@ -171,59 +169,8 @@ from `skyline_io`.
 | `records` | Exposes a read-only mapping of active IDs to immutable records. |
 | `last_update_stats` | Reports the last update and, for skyline deletion, constrained-query counters. |
 
-IDs must be unique integers; duplicate IDs or non-finite coordinates raise
-`ValueError`, and deleting an absent ID raises `KeyError` without changing the
-database. Equal coordinates may have different IDs and are preserved separately.
-This API maintains an in-memory database; it does not edit the source dataset.
 
-### Exclusive-Region Deletion
-
-After physically deleting p from the R-tree:
-
-1. If p was not a skyline record, the skyline is unchanged.
-2. Otherwise, remove p from the cached skyline S.
-3. Define `R = D(p) \ union(D(s) for s in S)`, where D denotes strict dominance.
-4. Run `constrained_skyline(p, S)` within R and merge the newly exposed records into S.
-
-R is represented implicitly rather than materialized as polygon fragments.
-An MBR is first clipped to p's upper-right dominance region; it is pruned if
-there is no overlap or a remaining skyline point dominates the clipped lower
-corner. Exact leaf membership excludes points outside R, and ordinary BBS
-checks prune entries dominated by newly discovered results. Both heap insertion
-and removal retain dominance checks. If an identical skyline point remains,
-R is empty and no nodes need expansion.
-
-In the example, deleting `(2, 2)` exposes `(3, 3)` and `(4, 2)`; `(3, 6)` remains
-dominated by `(1, 5)` and is excluded. Deleting the sole skyline point can make
-the exclusive region cover all remaining records, so that case may legitimately
-require visiting much of the tree.
-
-Native R-tree deletion unlinks the leaf, removes empty branches, tightens
-ancestor MBRs, and contracts a unary root. It preserves the existing clustering
-tree design without enforcing a new minimum occupancy or equal leaf depth.
-Retired pool slots are retained and not reused, so long update histories can
-increase allocated memory even when the active record count is small.
-`leaf_count` counts active records; `count` counts allocated node slots.
-
-`region_pruned_entries` counts entries rejected by the region constraint, while
-`examined_leaf_entries` counts leaf entries reaching the final membership check;
-these counters describe the constrained query, not the native deletion search.
-
-### Dynamic Validation
-
-```bash
-python3 -m unittest pyrtree.tests.test_dynamic -v
-SKYLINE_FULL_DATASET=1 python3 -m unittest discover -v
-```
-
-Tests compare the maintained skyline with an independent sorted scan after
-updates, check tree integrity, and forbid ordinary full-skyline calls during
-updates. Coverage includes 1,000 randomized operations, duplicates, empty-tree
-reinsertion, fixed-tree region pruning, and deletion/insertion sequences on the
-full assignment dataset.
-
-
-### One-Command Deletion Demo
+### Deletion Demo
 
 With the visualization dependencies installed, run:
 
@@ -231,14 +178,4 @@ With the visualization dependencies installed, run:
 .venv/bin/python demo_skyline_delete.py
 ```
 
-No arguments are needed: the script loads `Dataset_for_PA1`, computes its skyline,
-deletes skyline record `37348` at `(33.82, 25.82)` using exclusive-region BBS,
-and exports `results/skyline_delete_demo.png` with before/after panels on identical
-axis scales. Green outlines identify the deleted point on the left and newly
-exposed skyline locations on the right. The image uses the dynamically maintained
-result directly, checked against an independent reference.
-
-A `finally` block reinserts the deleted record and verifies that both the records
-and skyline match their initial state, including when an error occurs during
-plotting. The source dataset is never modified; the exported image preserves the
-intermediate state after deletion. Paths are resolved relative to the script.
+This will run a skyline to the dataset prof gave to us, then delete one of the skyline points (which will change the skyline), plot the two situations, and add the point back. See skyline_delete_demo.png for details.
