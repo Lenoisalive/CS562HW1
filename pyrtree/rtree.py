@@ -4,9 +4,14 @@ from __future__ import absolute_import
 
 MAXCHILDREN=10
 MAX_KMEANS=5
+MAX_CLUSTER_ITERATIONS=100
+LEAF = 1
+EMPTY = 2
 import math, random, sys
 import time
 import array
+import heapq
+import itertools
 
 from .rect import Rect, union_all, NullRect
 
@@ -31,8 +36,11 @@ class RTree(object):
         # Instead, it uses pools of arrays:
         self.count = 0
         self.leaf_count = 0
+        self._skyline_compatible = True
+        self.skyline_stats = {}
         self.rect_pool = array.array('d')
         self.node_pool = array.array('L')
+        self.kind_pool = bytearray()
         self.leaf_pool = [] # leaf objects. 
 
         self.cursor = _NodeCursor.create(self, NullRect)
@@ -41,10 +49,82 @@ class RTree(object):
         if len(self.rect_pool) < (4*idx):
             self.rect_pool.extend([0,0,0,0] * idx)
             self.node_pool.extend([0,0] * idx)
+            self.kind_pool.extend([EMPTY] * idx)
 
     def insert(self,o, orect):
         self.cursor.insert(o,orect)
         assert(self.cursor.index == 0)
+        self._skyline_compatible = self._skyline_compatible and (
+            orect.x == orect.xx and orect.y == orect.yy
+            and all(math.isfinite(v) for v in orect.coords()))
+
+    def skyline(self):
+        """Return original records on the 2-D minimum skyline using BBS.
+
+        Only finite point rectangles are supported. Equal coordinates retain
+        every record. Query counters describe the most recent successful call;
+        expanded_nodes includes the root of a nonempty tree.
+        """
+        if not self._skyline_compatible:
+            raise ValueError("skyline() requires finite point rectangles")
+
+        started = time.perf_counter()
+        stats = dict(expanded_nodes=0, pushed_entries=0, popped_entries=0,
+                     pruned_before_push=0, pruned_after_pop=0,
+                     dominance_comparisons=0, max_heap_size=0,
+                     skyline_records=0, first_result_seconds=None)
+        heap = []
+        sequence = itertools.count()
+        coordinates = []
+        records = []
+
+        def dominated(x, y):
+            for sx, sy in coordinates:
+                stats["dominance_comparisons"] += 1
+                if sx <= x and sy <= y and (sx < x or sy < y):
+                    return True
+            return False
+
+        def enqueue(node):
+            x, y = node.rect.x, node.rect.y
+            if dominated(x, y):
+                stats["pruned_before_push"] += 1
+                return
+            # Coordinate tie breakers preserve dominance order even if two
+            # distinct floating-point sums round to the same value.
+            priority = (x + y, x, y)
+            heapq.heappush(heap, (priority, next(sequence), node.index))
+            stats["pushed_entries"] += 1
+            stats["max_heap_size"] = max(stats["max_heap_size"], len(heap))
+
+        root = self.cursor.lift()
+        if root.rect is not NullRect:
+            stats["expanded_nodes"] += 1
+            for child in root.children():
+                enqueue(child)
+        node = root.lift()
+        while heap:
+            _, _, index = heapq.heappop(heap)
+            stats["popped_entries"] += 1
+            node._become(index)
+            x, y = node.rect.x, node.rect.y
+            if dominated(x, y):
+                stats["pruned_after_pop"] += 1
+                continue
+            if node.is_leaf():
+                coordinates.append((x, y))
+                records.append(node.leaf_obj())
+                if stats["first_result_seconds"] is None:
+                    stats["first_result_seconds"] = time.perf_counter() - started
+            else:
+                stats["expanded_nodes"] += 1
+                for child in node.children():
+                    enqueue(child)
+
+        stats["skyline_records"] = len(records)
+        stats["elapsed_seconds"] = time.perf_counter() - started
+        self.skyline_stats = stats
+        return records
 
     def query_rect(self, r):
         for x in self.cursor.query_rect(r): yield x
@@ -71,7 +151,6 @@ class _NodeCursor(object):
     @classmethod
     def create_with_children(cls, children, rooto):
         rect = union_all([c for c in children])
-        nr = Rect(rect.x,rect.y,rect.xx,rect.yy)
         assert(not rect.swapped_x)
         nc = _NodeCursor.create(rooto,rect)
         nc._set_children(children)
@@ -81,9 +160,9 @@ class _NodeCursor(object):
     @classmethod
     def create_leaf(cls, rooto, leaf_obj, leaf_rect):
         rect = Rect(leaf_rect.x,leaf_rect.y,leaf_rect.xx,leaf_rect.yy)
-        rect.swapped_x = True # Mark as leaf by setting the xswap flag.
         res = _NodeCursor.create(rooto, rect)
         idx = res.index
+        rooto.kind_pool[idx] = LEAF
         res.first_child = rooto.leaf_count
         rooto.leaf_count += 1
         res.next_sibling = 0
@@ -106,6 +185,8 @@ class _NodeCursor(object):
         self.first_child = first_child
 
     def walk(self, predicate):
+        if self.rect is NullRect:
+            return
         if (predicate(self, self.leaf_obj())):
             yield self
             if not self.is_leaf():
@@ -142,7 +223,7 @@ class _NodeCursor(object):
         xx = rp[recti+2]
         yy = rp[recti+3]
 
-        if (x == 0.0 and y == 0.0 and xx == 0.0 and yy == 0.0): 
+        if self.root.kind_pool[index] & EMPTY:
             self.rect = NullRect
         else:
             self.rect = Rect(x,y,xx,yy)
@@ -152,7 +233,7 @@ class _NodeCursor(object):
         self.index = index
 
     def is_leaf(self):
-        return self.rect.swapped_x
+        return bool(self.root.kind_pool[self.index] & LEAF)
 
     def has_children(self):
         return not self.is_leaf() and 0 != self.first_child
@@ -178,8 +259,10 @@ class _NodeCursor(object):
         nodei = self.index * 2
 
         if self.rect is not NullRect:
+            self.root.kind_pool[self.index] &= ~EMPTY
             self.rect.write_raw_coords(rp, recti)
         else: 
+            self.root.kind_pool[self.index] |= EMPTY
             rp[recti] = 0
             rp[recti+1] = 0
             rp[recti+2] = 0
@@ -238,7 +321,7 @@ class _NodeCursor(object):
             return
 
 
-        t = time.clock()
+        t = time.perf_counter()
         
         cur_score = -10
 
@@ -247,13 +330,14 @@ class _NodeCursor(object):
         memo = {}
 
         clusterings = [ k_means_cluster(self.root,k,s_children) for k in range(2,MAX_KMEANS) ]
-        score,bestcluster = max( [ (silhouette_coeff(c,memo),c) for c in clusterings ])
+        score,bestcluster = max(((silhouette_coeff(c,memo),c) for c in clusterings),
+                                 key=lambda item: item[0])
 
         nodes = [ _NodeCursor.create_with_children(c,self.root) for c in bestcluster if len(c) > 0]
 
         self._set_children(nodes)
         
-        dur = (time.clock() - t)
+        dur = (time.perf_counter() - t)
         c = float(self.root.stats["overflow_f"]) 
         oa = self.root.stats["avg_overflow_t_f"]
         self.root.stats["avg_overflow_t_f"] = (dur / (c + 1.0)) + (c * oa / (c + 1.0))
@@ -286,26 +370,17 @@ class _NodeCursor(object):
         
 
     def children(self):
-        if (0 == self.first_child): return
+        # Each child owns a cursor: stopping iteration early must not move
+        # the parent (in particular the tree's root cursor).
+        if self.is_leaf():
+            return
+        index = self.first_child
+        while index:
+            child = _NodeCursor(self.root, 0, NullRect, 0, 0)
+            child._become(index)
+            index = child.next_sibling
+            yield child
 
-        idx = self.index
-        fc = self.first_child
-        ns = self.next_sibling
-        r = self.rect
-
-        self._become(self.first_child)
-        while True:
-            yield self
-            if 0 == self.next_sibling:
-                break
-            else: self._become(self.next_sibling)
-
-        # Go back to becoming the same node we were.
-        #self._become(idx)
-        self.index = idx
-        self.first_child = fc
-        self.next_sibling = ns
-        self.rect = r
 
 def avg_diagonals(node, onodes, memo_tab):
     nidx = node.index
@@ -329,7 +404,8 @@ def avg_diagonals(node, onodes, memo_tab):
 def silhouette_w(node, cluster, next_closest_cluster, memo):
     ndist = avg_diagonals(node, cluster, memo)
     sdist = avg_diagonals(node, next_closest_cluster, memo)
-    return (sdist - ndist) / max(sdist,ndist)
+    scale = max(sdist, ndist)
+    return (sdist - ndist) / scale if scale else 0.0
 
 def silhouette_coeff(clustering, memo_tab):
     # special case for a clustering of 1.0
@@ -354,7 +430,16 @@ def center_of_gravity(nodes):
             xs = xs + (a * (x + (0.5 * w)))
             ys = ys + (a * (y + (0.5 * h)))
             totarea = totarea + a
-    return (xs / totarea), (ys / totarea)
+    if totarea:
+        return (xs / totarea), (ys / totarea)
+    # Points and axis-aligned line rectangles have zero area.
+    centers = [((n.rect.x + n.rect.xx) / 2,
+                (n.rect.y + n.rect.yy) / 2) for n in nodes
+               if n.rect is not NullRect]
+    if not centers:
+        raise ValueError("Cannot compute the center of an empty cluster")
+    return (sum(x for x, y in centers) / len(centers),
+            sum(y for x, y in centers) / len(centers))
 
 def closest(centroids, node):
     x,y = center_of_gravity([node])
@@ -370,7 +455,7 @@ def closest(centroids, node):
 
 
 def k_means_cluster(root, k, nodes):
-    t = time.clock()
+    t = time.perf_counter()
     if len(nodes) <= k: return [ [n] for n in nodes ]
     
     ns = list(nodes)
@@ -383,35 +468,26 @@ def k_means_cluster(root, k, nodes):
     cluster_centers = [ center_of_gravity([n]) for n in ns[:k] ]
     
     
-    # Loop until stable:
-    while True:
+    # Bound iteration: area-weighted centers need not converge for every
+    # mixture of rectangles and points. Every returned partition is valid.
+    for _ in range(MAX_CLUSTER_ITERATIONS):
         root.stats["sum_kmeans_iter_f"] += 1
-        clusters = [ [] for c in cluster_centers ]
-        
-        for n in ns: 
-            idx = closest(cluster_centers, n)
-            clusters[idx].append(n)
-        
-        #FIXME HACK TODO: is it okay for there to be empty clusters?
-        clusters = [ c for c in clusters if len(c) > 0 ]
+        clusters = [[] for c in cluster_centers]
+        for n in ns:
+            clusters[closest(cluster_centers, n)].append(n)
+        clusters = [c for c in clusters if c]
 
-        for c in clusters:
-            if (len(c) == 0):
-                print("Errorrr....")
-                print("Nodes: %d, centers: %s" % (len(ns),
-                                                              repr(cluster_centers)))
+        if len(clusters) < 2:
+            # Coincident centers must still split the overflowing node.
+            clusters = [ns[i::k] for i in range(k)]
+            break
+        new_cluster_centers = [center_of_gravity(c) for c in clusters]
+        if new_cluster_centers == cluster_centers:
+            break
+        cluster_centers = new_cluster_centers
 
-            assert(len(c) > 0)
-            
-        rest = ns
-        first = False
-
-        new_cluster_centers = [ center_of_gravity(c) for c in clusters ]
-        if new_cluster_centers == cluster_centers : 
-            root.stats["avg_kmeans_iter_f"] = float(root.stats["sum_kmeans_iter_f"] / root.stats["count_kmeans_iter_f"])
-            root.stats["longest_kmeans"] = max(root.stats["longest_kmeans"], (time.clock() - t))
-            return clusters
-        else: cluster_centers = new_cluster_centers
-        
-    
-    
+    root.stats["avg_kmeans_iter_f"] = (root.stats["sum_kmeans_iter_f"] /
+                                        root.stats["count_kmeans_iter_f"])
+    root.stats["longest_kmeans"] = max(root.stats["longest_kmeans"],
+                                      time.perf_counter() - t)
+    return clusters

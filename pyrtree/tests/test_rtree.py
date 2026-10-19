@@ -10,7 +10,8 @@ from pyrtree import Rect, RTree
 import collections
 import unittest as ut
 import random, math
-from testutil import *
+from pyrtree.tests.testutil import take
+from pyrtree.rect import NullRect
 
 def rr():
     return random.uniform(0.0,10.0)
@@ -82,23 +83,23 @@ class RectangleTests(ut.TestCase):
         rb = Rect(5,5,15,15)
         res = ra.intersect(rb)
         x,y,w,h = res.extent()
-        self.assertEquals(x,5)
-        self.assertEquals(y,5)
-        self.assertEquals(w,5)
-        self.assertEquals(h,5)
-        self.assertEquals(res.area(), 25)
+        self.assertEqual(x,5)
+        self.assertEqual(y,5)
+        self.assertEqual(w,5)
+        self.assertEqual(h,5)
+        self.assertEqual(res.area(), 25)
 
         rc = Rect(0,0,10,10)
         rd = Rect(11,11,21,21)
         res2 = rc.intersect(rd)
-        self.assertEquals(res2.area(),0)
+        self.assertEqual(res2.area(),0)
         self.assertTrue(res2 is NullRect)
 
         for i in range(1000):
             a,b = G.intersectingPair()
             self.assertTrue(a.intersect(b).area() > 0.0)
             c,d = G.disjointPair()
-            self.assertEquals(c.intersect(d).area(), 0)
+            self.assertEqual(c.intersect(d).area(), 0)
 
         self.assertTrue(ra.intersect(NullRect) is NullRect)
         self.assertTrue(NullRect.intersect(ra) is NullRect)
@@ -107,10 +108,10 @@ class RectangleTests(ut.TestCase):
         ra = Rect(0,0,10,10)
         rb = Rect(-10,-10,1,1)
         x,y,w,h = ra.union(rb).extent()
-        self.assertEquals(x,-10)
-        self.assertEquals(y,-10)
-        self.assertEquals(w,20)
-        self.assertEquals(h,20)
+        self.assertEqual(x,-10)
+        self.assertEqual(y,-10)
+        self.assertEqual(w,20)
+        self.assertEqual(h,20)
 
         for i in range(1000):
             a,b = G.rect(),G.rect()
@@ -154,7 +155,7 @@ class RTreeTest(ut.TestCase):
         n = RTree()
 
     def invariants(self, tree):
-        self.assertEquals(tree.cursor.index, 0)
+        self.assertEqual(tree.cursor.index, 0)
         self._invariants(tree.cursor, {})
 
     def _invariants(self,node, seen):
@@ -174,18 +175,18 @@ class RTreeTest(ut.TestCase):
         else:
             for c in node.children():
                 self.assertTrue(not c.is_leaf())
-        self.assertEquals(idx,node.index)
+        self.assertEqual(idx,node.index)
 
         r = Rect(node.rect.x, node.rect.y, node.rect.xx, node.rect.yy)
         for c in node.children():
             assert r.does_contain(c.rect)
 
-        self.assertEquals(idx,node.index)
+        self.assertEqual(idx,node.index)
 
         for c in node.children():
             if not c.is_leaf(): self._invariants(c, seen)
 
-        self.assertEquals(idx,node.index)
+        self.assertEqual(idx,node.index)
 
     def testContainer(self):
         """ Test container-like behaviour. """
@@ -202,7 +203,7 @@ class RTreeTest(ut.TestCase):
         for w in ws:
             rrs[w] = rrs[w] + 1
 
-        for x in xs: self.assertEquals(rrs[x], 1)
+        for x in xs: self.assertEqual(rrs[x], 1)
 
     def testDegenerateContainer(self):
         """ Tests that an r-tree still works like a container even with highly overlapping rects. """
