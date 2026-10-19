@@ -14,6 +14,7 @@ import heapq
 import itertools
 
 from .rect import Rect, union_all, NullRect
+from .skyline_region import ExclusiveDominanceRegion
 
 class RTree(object):
     def __init__(self):
@@ -36,6 +37,7 @@ class RTree(object):
         # Instead, it uses pools of arrays:
         self.count = 0
         self.leaf_count = 0
+        self._nonpoint_count = 0
         self._skyline_compatible = True
         self.skyline_stats = {}
         self.rect_pool = array.array('d')
@@ -54,9 +56,74 @@ class RTree(object):
     def insert(self,o, orect):
         self.cursor.insert(o,orect)
         assert(self.cursor.index == 0)
-        self._skyline_compatible = self._skyline_compatible and (
-            orect.x == orect.xx and orect.y == orect.yy
-            and all(math.isfinite(v) for v in orect.coords()))
+        if not self._is_point(orect):
+            self._nonpoint_count += 1
+        self._skyline_compatible = self._nonpoint_count == 0
+
+    @staticmethod
+    def _is_point(rect):
+        return (rect.x == rect.xx and rect.y == rect.yy
+                and all(math.isfinite(v) for v in rect.coords()))
+
+    def delete(self, obj, rect):
+        """Remove one entry matching object identity and exact rectangle.
+
+        Return False if absent. Unlink empty branches and tighten ancestor MBRs
+        in place; the tree is never rebuilt. Allocated pool slots are retained.
+        """
+        stack = [(self.cursor.lift(), ())]
+        found = None
+        while stack:
+            node, ancestors = stack.pop()
+            if node.rect is NullRect or not node.rect.does_contain(rect):
+                continue
+            if node.is_leaf():
+                if node.leaf_obj() is obj and node.rect.coords() == rect.coords():
+                    found = node, ancestors
+                    break
+            else:
+                stack.extend((child, ancestors + (node.index,)) for child in node.children())
+        if found is None:
+            return False
+        node, ancestors = found
+        self.leaf_pool[node.first_child] = None
+        self.leaf_count -= 1
+        if not self._is_point(node.rect):
+            self._nonpoint_count -= 1
+        self._skyline_compatible = self._nonpoint_count == 0
+        removed_index = node.index
+        self._retire(node)
+
+        for index in reversed(ancestors):
+            parent = self.cursor.lift()
+            parent._become(index)
+            # The retired node's sibling pointer is preserved until unlinked.
+            children = [c for c in parent.children() if c.index != removed_index]
+            parent.rect = union_all(children)
+            parent._set_children(children)
+            if children:
+                removed_index = None
+            else:
+                removed_index = parent.index
+                self._retire(parent)
+
+        self.cursor._become(0)
+        # Shorten a unary root without changing the type of sibling entries.
+        while self.cursor.has_children():
+            children = list(self.cursor.children())
+            if len(children) != 1 or children[0].is_leaf():
+                break
+            child = children[0]
+            self.cursor.rect = child.rect
+            self.cursor._set_children(list(child.children()))
+            self._retire(child)
+        return True
+
+    def _retire(self, node):
+        self.kind_pool[node.index] = EMPTY
+        node.rect = NullRect
+        node.first_child = 0
+        node._save_back()
 
     def skyline(self):
         """Return original records on the 2-D minimum skyline using BBS.
@@ -65,6 +132,14 @@ class RTree(object):
         every record. Query counters describe the most recent successful call;
         expanded_nodes includes the root of a nonempty tree.
         """
+        return self._bbs()
+
+    def constrained_skyline(self, deleted_point, remaining_points):
+        """Return only newly exposed skyline records in the exclusive region."""
+        region = ExclusiveDominanceRegion(deleted_point, remaining_points)
+        return self._bbs(region)
+
+    def _bbs(self, region=None):
         if not self._skyline_compatible:
             raise ValueError("skyline() requires finite point rectangles")
 
@@ -72,7 +147,8 @@ class RTree(object):
         stats = dict(expanded_nodes=0, pushed_entries=0, popped_entries=0,
                      pruned_before_push=0, pruned_after_pop=0,
                      dominance_comparisons=0, max_heap_size=0,
-                     skyline_records=0, first_result_seconds=None)
+                     skyline_records=0, first_result_seconds=None,
+                     region_pruned_entries=0, examined_leaf_entries=0)
         heap = []
         sequence = itertools.count()
         coordinates = []
@@ -86,7 +162,11 @@ class RTree(object):
             return False
 
         def enqueue(node):
-            x, y = node.rect.x, node.rect.y
+            if region is not None and not region.intersects(node.rect):
+                stats["region_pruned_entries"] += 1
+                return
+            x, y = (region.lower_bound(node.rect) if region is not None
+                    else (node.rect.x, node.rect.y))
             if dominated(x, y):
                 stats["pruned_before_push"] += 1
                 return
@@ -98,7 +178,7 @@ class RTree(object):
             stats["max_heap_size"] = max(stats["max_heap_size"], len(heap))
 
         root = self.cursor.lift()
-        if root.rect is not NullRect:
+        if root.rect is not NullRect and (region is None or region.intersects(root.rect)):
             stats["expanded_nodes"] += 1
             for child in root.children():
                 enqueue(child)
@@ -107,11 +187,16 @@ class RTree(object):
             _, _, index = heapq.heappop(heap)
             stats["popped_entries"] += 1
             node._become(index)
-            x, y = node.rect.x, node.rect.y
+            x, y = (region.lower_bound(node.rect) if region is not None
+                    else (node.rect.x, node.rect.y))
             if dominated(x, y):
                 stats["pruned_after_pop"] += 1
                 continue
             if node.is_leaf():
+                stats["examined_leaf_entries"] += 1
+                if region is not None and not region.contains(x, y):
+                    stats["region_pruned_entries"] += 1
+                    continue
                 coordinates.append((x, y))
                 records.append(node.leaf_obj())
                 if stats["first_result_seconds"] is None:
@@ -163,7 +248,7 @@ class _NodeCursor(object):
         res = _NodeCursor.create(rooto, rect)
         idx = res.index
         rooto.kind_pool[idx] = LEAF
-        res.first_child = rooto.leaf_count
+        res.first_child = len(rooto.leaf_pool)
         rooto.leaf_count += 1
         res.next_sibling = 0
         rooto.leaf_pool.append(leaf_obj)
@@ -347,7 +432,8 @@ class _NodeCursor(object):
     def _set_children(self, cs):
         self.first_child = 0
 
-        if 0 == len(cs): 
+        if 0 == len(cs):
+            self._save_back()
             return
 
         pred = None
