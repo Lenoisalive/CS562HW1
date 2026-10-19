@@ -1,8 +1,6 @@
-# R-tree Skyline Computation
+# Overview
 
-A Python implementation of the Branch-and-Bound Skyline (BBS) algorithm that reads two-dimensional points, stores them in an R-tree, and returns the records that are not dominated by any other record.
-
-Both dimensions are minimized: a point dominates another if it is no larger in either coordinate and strictly smaller in at least one coordinate; identical skyline points retain all their original records.
+This is the HW1 programming part. I revised the original r-tree, implement the skyline algorithm, and write a new visualization program that produces a png of a file.
 
 ## 1. Project Structure
 
@@ -45,15 +43,12 @@ skyline/
 | [visualize_skyline.py](visualize_skyline.py) | New | Plots all samples and the verified BBS skyline, highlighting and connecting distinct skyline locations in increasing x order. |
 
 
-Supporting files: `requirements-visualization.txt` declares the optional Matplotlib dependency, and `.gitignore` excludes local environments and Python/Matplotlib caches.
-
 ## 3. How to Start
 
 Run commands from the repository root using Python 3; the implementation has been tested with Python 3.13.
 
 ### Compute the Skyline
 
-The core program uses only the Python standard library and the included `pyrtree` code.
 
 ```bash
 python3 skyline.py Dataset_for_PA1 --output results/skyline.csv --verify
@@ -80,13 +75,7 @@ Input has no header, with coordinates separated by whitespace:
 38.50 22.25
 ```
 
-Blank lines are skipped, while `record_id` preserves the original **one-based file line number**; malformed rows and non-finite coordinates produce an error with the offending line number.
-
-CSV columns are `record_id,x,y`, ordered by `(x, y, record_id)`, with duplicate skyline records retained; an empty input produces a header-only CSV.
-
-The terminal reports input and skyline counts, reading time, tree construction time, BBS query time, expanded nodes, and pruning counts; optional verification time is measured separately from BBS time.
-
-A successful run replaces an existing output file only after the complete CSV has been written; input/output aliases are rejected, and invalid input or failed verification leaves existing output untouched.
+Blank lines are skipped; malformed rows and non-finite coordinates produce an error with the offending line number.
 
 Exit codes are `0` for success, `1` for input/output or verification failure, and `2` for invalid command-line arguments.
 
@@ -112,8 +101,6 @@ The plot always checks BBS against the independent reference before saving, prin
 
 For `Dataset_for_PA1`, the program processed **38,377 records** representing **27,543 distinct coordinates** and returned **8 skyline records**, all at distinct coordinates; their record IDs matched the independent sorted-scan result exactly.
 
-The full suite passed **34 tests**, both executable forms produced identical CSV files, and the visualization was regenerated successfully.
-
 ### Skyline Data
 
 The following records are saved in [results/skyline.csv](results/skyline.csv); plot labels follow this table's row order.
@@ -137,4 +124,4 @@ With seed `42`, BBS expanded **41 internal nodes**, including the root, and prun
 
 Gray-blue markers show all input samples, while red markers identify skyline locations and labels correspond to the table above; the red segments connect locations in increasing x order as visual guides, not additional data points or a dominance-region boundary.
 
-The R-tree is adapted from [pyrtree](https://code.google.com/archive/p/pyrtree/), and the BBS implementation follows Section 3.2 and Figure 3.4 of *Progressive Skyline Computation in Database Systems* by Papadias, Tao, Fu, and Seeger.
+The R-tree is adapted from [pyrtree](https://code.google.com/archive/p/pyrtree/).
